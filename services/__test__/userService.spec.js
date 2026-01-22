@@ -1,4 +1,4 @@
-import { createUser } from '../../services/userService.js';
+import { createUser } from '../userService';
 
 
 describe('createUser', () => {
