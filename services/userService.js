@@ -40,7 +40,7 @@ export async function createUser(userData) {
     const user = new User({
         email: formattedEmail,
         password: hashedPassword
-    })
+    });
 
     await user.save()
     return user
