@@ -1,238 +1,78 @@
-import { jest } from '@jest/globals';
+import * as agentService from '../services/agentService.js'
+import { isValidObjectId } from '../utils/helpers.js'
+import { getErrorMessage } from '../utils/helpers.js'
 
-import request from 'supertest';
+export function index(req, res, next) {
+    res.render('new-agent')
+}
 
+export async function postNew(req, res, next) {
+    try {
+        const { name, age } = req.body
+        const userId = req.session.userId
 
+        // Convertir age a número si viene como string
+        const ageNumber = age ? parseInt(age, 10) : null
 
-jest.unstable_mockModule('../../lib/sessionManager.js', () => {
-    return {
-        middleware: (req, res, next) => {
-            req.session = { userId: 1 };
-            // Imprescindible llamar a next() cuando mockeamos middlewares
-            // return res.status(201).json(); 
-            next();
-        },
-        useSessionInViews: (req, res, next) => {
-            res.locals.session = req.session || {};
-            next();
-        },
-        guard: (req, res, next) => next(),
+        // Usar el servicio para crear el agente (incluye validaciones)
+        await agentService.createAgent({
+            name,
+            age: ageNumber,
+            owner: userId
+        })
+
+        res.redirect('/')
+
+    } catch (error) {
+        // Manejar errores de validación mostrándolos en la vista
+        res.locals.error = getErrorMessage(error)
+        res.locals.name = req.body.name || ''
+        res.locals.age = req.body.age || ''
+        res.render('new-agent')
     }
-});
+}
 
-jest.unstable_mockModule('../../services/agentService.js', () => ({
-    createAgent: mockCreateAgent,
-    deleteAgent: mockDeleteAgent,
-    getAgentsByOwner: mockGetAgentsByOwner,
-    updateAgent: mockUpdateAgent,
-}));
-const mockCreateAgent = jest.fn();
-const mockDeleteAgent = jest.fn();
-const mockGetAgentsByOwner = jest.fn();
-const mockUpdateAgent = jest.fn();
+export async function deleteAgent(req, res, next) {
+    try {
+        const userId = req.session.userId
+        const agentId = req.params.agentId
 
-// TODO: Mockear Morgan
-jest.unstable_mockModule('morgan', () => ({
-    default: () => (req, res, next) => {
-        next();
+        // Validar que el agentId sea un ObjectId válido
+        if (!isValidObjectId(agentId)) {
+            return res.redirect('/?error=invalid_agent_id')
+        }
+
+        // Usar el servicio para eliminar el agente
+        const deleted = await agentService.deleteAgent(agentId, userId)
+
+        if (!deleted) {
+            return res.redirect('/?error=agent_not_found')
+        }
+
+        res.redirect('/')
+
+    } catch (error) {
+        next(error)
     }
-}));
+}
 
+export async function editAgent(req, res, next) {
 
-const { default: app } = await import('../../app.js');
+    const agentId = req.params.agentId;
 
+    if (!isValidObjectId(agentId)) {
+        return res.status(400).send('Invalid Object ID');
+    }
 
-describe('Agents Page - Integration Test', () => {
+    const agents = await agentService.getAgentsByOwner(req.session.userId);
 
-    // Evaluar que contiene un formulario
-    it('Debe renderizar la página de new-agent con GET /agents/new', async () => {
-        expect.assertions(2);
+    const agent = agents.find(i => i._id.toString() === agentId);
 
-        const response = await request(app)
-            .get('/agents/new');
+    if (!agent) {
+        return res.status(404).send('Agent not found');
+    }
 
-        expect(response.status).toBe(200);
-        expect(response.text).toContain('<form');
-    });
+    const updated = await agentService.updateAgent(agentId, req.session.userId, req.body);
 
-    // Crear el mock
-    // Crear el agente
-    // Redirige correctamente
-    it('Debe crear un agente con POST /agents/new', async () => {
-        expect.assertions(4);
-        const agentData = {
-            name: 'John Doe',
-            age: 25
-        };
-
-        mockCreateAgent.mockResolvedValue({
-            ...agentData,
-            _id: 'agent123',
-            owner: 1
-        });
-
-        const response = await request(app)
-            .post('/agents/new')
-            .send(agentData);
-
-        expect(response.header.location).toBe('/');
-        expect(response.status).toBe(302);
-        expect(mockCreateAgent).toHaveBeenCalledWith({
-            ...agentData,
-            owner: 1
-        });
-        expect(mockCreateAgent).toHaveBeenCalledTimes(1);
-
-    });
-
-
-    it('Debe eliminar un agente con GET /agents/delete/:agentId', async () => {
-        expect.assertions(2);
-        const agentId = '507f1f77bcf86cd799439011';
-
-        mockDeleteAgent.mockResolvedValue(true);
-
-        const response = await request(app)
-            .get(`/agents/delete/${agentId}`);
-
-        expect(response.header.location).toBe('/');
-        expect(mockDeleteAgent).toHaveBeenCalledTimes(1);
-
-    });
-
-    describe('TDD edit agent', () => {
-
-        // Debe recibir un objectId por paràmetro.
-        it('Debe recibir un objectId por paràmetro', async () => {
-            expect.assertions(1);
-
-            const agentId = '507f1f77bcf86cd799439011';
-
-            mockGetAgentsByOwner.mockResolvedValue([{
-                _id: agentId,
-                name: 'John Doe',
-                age: 25,
-                owner: 1
-            }]);
-
-            const response = await request(app)
-                .put(`/agents/edit/${agentId}`);
-
-            expect(response.status).toBe(200);
-        });
-
-        // Debe devolver un error si el objectId no es válido.
-        it('Debe devolver un error si el objectId no es válido', async () => {
-            expect.assertions(1);
-
-            const agentId = 'invalid-agent-id';
-
-            const response = await request(app)
-                .put(`/agents/edit/${agentId}`);
-
-            expect(response.status).toBe(400);
-        });
-
-        // Debe verificar el owner del agente
-        it('Debe verificar el owner del agente', async () => {
-            expect.assertions(2);
-
-            const agentId = '507f1f77bcf86cd799439011';
-
-            mockGetAgentsByOwner.mockResolvedValue([{
-                _id: agentId,
-                name: 'John Doe',
-                age: 25,
-                owner: 1
-            }]);
-
-            const response = await request(app)
-                .put(`/agents/edit/${agentId}`);
-            // Pasar un owner distinto a nuestra sesión, y eso nos deuvelve un 403;
-
-            expect(mockGetAgentsByOwner).toHaveBeenCalledTimes(1);
-            expect(mockGetAgentsByOwner).toHaveBeenCalledWith(1);
-            // Verificar que se esta llamando a una funcion del servicio
-        });
-
-        // Si no encuentra ningun agente, devuelve un 404
-        it('Si no encuentra ningun agente, devuelve un 404', async () => {
-            expect.assertions(1);
-
-            const agentId = '507f1f77bcf86cd799439011';
-
-            mockGetAgentsByOwner.mockResolvedValue([]);
-
-            const response = await request(app)
-                .put(`/agents/edit/${agentId}`);
-            // Pasar un owner distinto a nuestra sesión, y eso nos deuvelve un 403;
-
-            expect(response.status).toBe(404);
-        });
-
-        // Debe crear un agente llamando al servicio (no es necesario implementar).
-        it('Debe crear un agente llamando a agentService', async () => {
-
-            const agentId = '507f1f77bcf86cd799439011';
-            const updateData = {
-                name: 'John Nieve',
-                age: 19
-            };
-
-            mockGetAgentsByOwner.mockResolvedValue([{
-                _id: agentId,
-                name: 'John Doe',
-                age: 25,
-                owner: 1
-            }]);
-
-            const response = await request(app)
-                .put(`/agents/edit/${agentId}`)
-                .send(updateData);
-
-            expect(response.status).toBe(200);
-            expect(mockUpdateAgent).toHaveBeenCalledTimes(1);
-            expect(mockUpdateAgent).toHaveBeenCalledWith(agentId, 1, updateData);
-
-        });
-
-        // Debe devolver el agente creado.
-        it('Debe devolver el agente creado', async () => {
-
-            const agentId = '507f1f77bcf86cd799439011';
-            const updateData = {
-                name: 'John Nieve',
-                age: 19
-            };
-
-            mockGetAgentsByOwner.mockResolvedValue([{
-                _id: agentId,
-                name: 'John Doe',
-                age: 25,
-                owner: 1
-            }]);
-
-
-            mockUpdateAgent.mockResolvedValue({
-                _id: agentId,
-                name: 'John Doe',
-                age: 25,
-                owner: 1
-            });
-
-            const response = await request(app)
-                .put(`/agents/edit/${agentId}`)
-                .send(updateData);
-
-            expect(response.status).toBe(200);
-            expect(response.body).toEqual({
-                _id: agentId,
-                name: 'John Doe',
-                age: 25,
-                owner: 1
-            });
-
-        });
-
-    });
-});
+    res.status(200).json(updated);
+}
